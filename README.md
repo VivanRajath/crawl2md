@@ -1,6 +1,6 @@
-# webb2md
+# crawl2md
 
-Convert any website into a local, structured Markdown knowledge base — built for AI agents and humans who need to reason over web content without wasting tokens.
+Crawl any website and save it as a structured Markdown knowledge base. Good for feeding AI agents, building RAG pipelines, or just having offline docs.
 
 ## Documentation
 
@@ -14,34 +14,34 @@ Convert any website into a local, structured Markdown knowledge base — built f
 **Run without installing (recommended):**
 
 ```bash
-npx webb2md <url>
+npx crawl2md <url>
 ```
 
 **Install globally:**
 
 ```bash
-npm install -g webb2md
-webb2md <url>
+npm install -g crawl2md
+crawl2md <url>
 ```
 
 **Install locally in a project:**
 
 ```bash
-npm install webb2md
-npx webb2md <url>
+npm install crawl2md
+npx crawl2md <url>
 ```
 
 ---
 
 ## The Problem
 
-When an AI agent is asked to research a webpage, it spends the majority of its context window on mechanical work: fetching a URL, stripping HTML boilerplate, parsing navigation and footers, extracting text, and formatting it. None of that processing is the task — it is overhead. On large documentation sites with dozens of pages, the token cost of this pipeline can make the actual reasoning task impractical.
+When an AI agent researches a webpage, most of its context window goes to mechanical work: fetching a URL, stripping HTML, parsing navigation and footers, extracting text. That's overhead, not the actual task. On a documentation site with dozens of pages, it adds up fast.
 
-## What webb2md Does
+## What crawl2md Does
 
-webb2md is a CLI tool that moves all of that overhead out of the agent and onto the local filesystem. You run it once against a URL or an entire site. It fetches, parses, cleans, and converts every page into plain Markdown, then writes a structured directory to disk. From that point forward, an agent reads local files — no fetching, no parsing, no HTML — only content.
+crawl2md moves that overhead off the agent and onto your local filesystem. Run it once against a URL or a full site. It fetches, parses, and converts every page to plain Markdown, then writes everything to a structured directory. After that, an agent reads local files with no HTTP requests, no HTML parsing, just content.
 
-The output is also structured for retrieval-augmented generation (RAG). With the `--chunks` flag, every page is split on its `##` headings into individual chunk files, each with YAML frontmatter that records the source URL, page title, section heading, chunk index, and total chunk count. A vector store can ingest these chunks directly without any pre-processing.
+With `--chunks`, every page is split on its `##` headings into individual chunk files with YAML frontmatter (source URL, page title, section heading, chunk index, total count). Drop these directly into a vector store.
 
 ---
 
@@ -53,9 +53,9 @@ The output is also structured for retrieval-augmented generation (RAG). With the
 - Hierarchical output directory: `pages/`, `chunks/`, `index.md`, `sitemap.json`, `metadata.json`
 - URL filtering: include or exclude specific path prefixes
 - Automatic noise removal: skips assets, login pages, feeds, admin paths, and fragment URLs
-- Slug collision prevention: unique filenames guaranteed even when two URLs map to the same slug
-- Related page links: each page file ends with a `## Related Pages` section pointing to pages it links to
-- Cross-platform path handling: Git Bash path expansion on Windows is normalised automatically
+- Slug collision prevention: unique filenames even when two URLs map to the same slug
+- Related page links: each page ends with a `## Related Pages` section
+- Windows Git Bash support: path arguments like `/docs` are normalized automatically
 
 ---
 
@@ -63,16 +63,16 @@ The output is also structured for retrieval-augmented generation (RAG). With the
 
 ```bash
 # Fetch a single page
-npx webb2md https://example.com
+npx crawl2md https://example.com
 
 # Crawl an entire site
-npx webb2md https://docs.example.com --crawl
+npx crawl2md https://docs.example.com --crawl
 
 # Crawl with RAG chunks
-npx webb2md https://docs.example.com --crawl --chunks
+npx crawl2md https://docs.example.com --crawl --chunks
 
 # Crawl a specific section only
-npx webb2md https://docs.example.com --crawl --include /guides --max-pages 100
+npx crawl2md https://docs.example.com --crawl --include /guides --max-pages 100
 ```
 
 ---
@@ -82,9 +82,9 @@ npx webb2md https://docs.example.com --crawl --include /guides --max-pages 100
 ```
 output/
 └── docs.example.com/
-    ├── index.md           # human-readable table of all pages with word counts and depth
-    ├── sitemap.json       # machine-readable page graph with links between slugs
-    ├── metadata.json      # full crawl stats: duration, attempted, succeeded, failed URLs
+    ├── index.md           # table of all pages with word counts and depth
+    ├── sitemap.json       # page graph with links between slugs
+    ├── metadata.json      # crawl stats: duration, attempted, succeeded, failed URLs
     ├── pages/
     │   ├── getting-started.md
     │   ├── api-reference.md
@@ -119,8 +119,8 @@ section: "Installation"
 | `--crawl` | off | Follow internal links instead of fetching only the seed URL |
 | `--depth <n>` | `3` | Maximum link depth from the seed URL |
 | `--max-pages <n>` | `50` | Hard cap on total pages crawled |
-| `--include <path>` | — | Only crawl URLs whose path starts with this prefix. Repeatable. |
-| `--exclude <path>` | — | Skip URLs whose path starts with this prefix. Repeatable. |
+| `--include <path>` | none | Only crawl URLs whose path starts with this prefix. Repeatable. |
+| `--exclude <path>` | none | Skip URLs whose path starts with this prefix. Repeatable. |
 | `--chunks` | off | Write RAG-ready chunk files under `chunks/` |
 
 ---

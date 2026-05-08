@@ -1,5 +1,5 @@
 {
-  "name": "webb2md",
+  "name": "crawl2md",
   "version": "1.0.2",
   "description": "Convert any website into a structured markdown knowledge directory — optimized for humans, AI agents, and RAG pipelines.",
   "author": "VivanRajath",
@@ -7,7 +7,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "webb2md": "dist/index.js"
+    "crawl2md": "dist/index.js"
   },
   "files": [
     "dist"

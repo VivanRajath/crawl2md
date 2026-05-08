@@ -1,18 +1,18 @@
-# webb2md — Architecture
+# crawl2md Architecture
 
-A deep explanation of the design, data flow, module responsibilities, and key decisions in the webb2md codebase.
+A walkthrough of the design, data flow, and module responsibilities in the crawl2md codebase.
 
-**npm package:** `webb2md` — install with `npm install -g webb2md` or run directly with `npx webb2md <url>`.
+**npm package:** `crawl2md` - install with `npm install -g crawl2md` or run with `npx crawl2md <url>`.
 
 ---
 
 ## Purpose and Design Philosophy
 
-Most AI agent workflows that involve web research operate by passing a URL to the agent, which then fetches the page in real time, strips HTML, extracts text, and reasons over the content — all inside the context window. Every step of that pipeline consumes tokens. On a single page this is tolerable. On a documentation site with 50 or 100 pages, the mechanical overhead of fetching and parsing dominates the context window, leaving little room for actual reasoning.
+The typical AI agent research loop: receive URL, fetch page, strip HTML, extract text, reason over content. All of that happens inside the context window and burns tokens. For a single page it's fine. For a documentation site with 50-100 pages, the fetch-parse overhead takes over and leaves little room for actual reasoning.
 
-webb2md relocates that pipeline entirely to the local filesystem. A single CLI invocation fetches, parses, deduplicates, and structures an entire site into plain Markdown files. The agent then reads local files. It never sees HTML, never makes HTTP requests, and never wastes tokens on navigation menus, footers, or cookie banners. The output is also structured for direct RAG ingestion — chunk files with YAML frontmatter can be embedded into a vector store without any additional pre-processing.
+crawl2md moves that pipeline to the local filesystem. One CLI call fetches, parses, deduplicates, and converts an entire site into plain Markdown files. The agent reads local files with no HTTP requests, no HTML parsing, and no wasted tokens on nav menus or footers. The chunk output is structured for direct RAG ingestion without any additional pre-processing.
 
-The codebase is organised around a strict separation of concerns: crawling, parsing, and exporting are independent layers that communicate through a typed in-memory registry. No layer has knowledge of the others' internals.
+The code is split into three independent layers: crawling, parsing, and exporting. Each layer communicates through a typed in-memory registry. No layer knows about the others' internals.
 
 ---
 
@@ -27,7 +27,7 @@ CLI arguments
      v
   runSiteCrawler()  [crawler/SiteCrawler.ts]
      |
-     +---> UrlFilter       initialised with seed URL, include/exclude rules
+     +---> UrlFilter       initialized with seed URL, include/exclude rules
      |
      +---> CrawlQueue      seed URL enqueued at depth 0
      |
@@ -60,13 +60,13 @@ CLI arguments
 
 ## Module Breakdown
 
-### Entry Point — `src/index.ts`
+### Entry Point (`src/index.ts`)
 
 Minimal. Imports `runCLI` from `cli/cli.ts` and calls it. All logic is delegated.
 
 ---
 
-### CLI Layer — `src/cli/cli.ts`
+### CLI Layer (`src/cli/cli.ts`)
 
 Built on [Commander](https://github.com/tj/commander.js). Defines the public interface of the tool.
 
@@ -76,7 +76,7 @@ Responsibilities:
 - Map CLI option values to a typed `CrawlOptions` object
 - Route execution to `runSiteCrawler()`
 
-Key design decision: the CLI does not branch between single-page and crawl mode with separate code paths. Instead it passes `maxDepth: 0` and `maxPages: 1` when `--crawl` is not set. The crawler handles both cases with the same BFS loop. A page at depth 0 with a page cap of 1 produces exactly one page and stops.
+Single-page and crawl modes use the same code path. Single-page mode passes `maxDepth: 0` and `maxPages: 1`, so the BFS loop runs once and stops.
 
 ```typescript
 maxDepth: options.crawl ? parseInt(options.depth) : 0,
@@ -85,13 +85,13 @@ maxPages: options.crawl ? parseInt(options.maxPages) : 1,
 
 ---
 
-### Crawler — `src/crawler/SiteCrawler.ts`
+### Crawler (`src/crawler/SiteCrawler.ts`)
 
-The orchestrator. Owns the BFS crawl loop and coordinates all other modules.
+The main orchestrator. Owns the BFS crawl loop and coordinates everything else.
 
 **Exported types:**
 
-`CrawlOptions` — input configuration
+`CrawlOptions`: input configuration
 
 ```typescript
 {
@@ -103,7 +103,7 @@ The orchestrator. Owns the BFS crawl loop and coordinates all other modules.
 }
 ```
 
-`CrawlStats` — output telemetry written to `metadata.json`
+`CrawlStats`: output telemetry written to `metadata.json`
 
 ```typescript
 {
@@ -114,7 +114,7 @@ The orchestrator. Owns the BFS crawl loop and coordinates all other modules.
 }
 ```
 
-`CrawlResult` — return value of `runSiteCrawler()`
+`CrawlResult`: return value of `runSiteCrawler()`
 
 ```typescript
 { registry: PageRegistry, hostname: string, stats: CrawlStats }
@@ -122,13 +122,13 @@ The orchestrator. Owns the BFS crawl loop and coordinates all other modules.
 
 **BFS loop walkthrough:**
 
-1. `UrlFilter` and `CrawlQueue` are initialised. The normalised seed URL is enqueued at depth 0.
+1. `UrlFilter` and `CrawlQueue` are initialized. The normalized seed URL is enqueued at depth 0.
 2. While the queue is not empty and the page cap has not been reached:
    a. Dequeue the next entry. Skip if its depth exceeds `maxDepth`.
-   b. `fetchHTML()` — axios GET with a 10 second timeout. On failure, log the URL to `failedUrls` and continue.
-   c. `extractReadableContent()` — JSDOM + Mozilla Readability. On failure, log and continue. If Readability returns no content, skip silently.
-   d. `extractLinks()` — Cheerio parses the raw HTML and resolves all `href` values to absolute URLs.
-   e. Each outbound URL is normalised by `UrlFilter.normalize()`, then tested by `UrlFilter.allow()`. Only those that pass are retained.
+   b. `fetchHTML()`: axios GET with a 10 second timeout. On failure, log the URL to `failedUrls` and continue.
+   c. `extractReadableContent()`: JSDOM + Mozilla Readability. On failure, log and continue. If Readability returns no content, skip silently.
+   d. `extractLinks()`: Cheerio parses the raw HTML and resolves all `href` values to absolute URLs.
+   e. Each outbound URL is normalized by `UrlFilter.normalize()`, then tested by `UrlFilter.allow()`. Only those that pass are kept.
    f. `htmlToMarkdown()` converts the Readability HTML output to Markdown.
    g. `registry.register()` generates a unique slug and stores a `PageRecord`.
    h. If the current depth is less than `maxDepth`, allowed outbound URLs not already seen are enqueued at `depth + 1`.
@@ -136,29 +136,29 @@ The orchestrator. Owns the BFS crawl loop and coordinates all other modules.
 
 **Why Readability and not raw Cheerio?**
 
-Readability was built by Mozilla for the Firefox Reader View. It models the semantic structure of an article — identifying the main content block, removing navigation, ads, sidebars, and footers. Raw Cheerio would require per-site CSS selector rules. Readability works across sites without configuration, which is the right trade-off for a general-purpose tool.
+Readability was built by Mozilla for Firefox Reader View. It identifies the main content block and strips nav, ads, sidebars, and footers. Raw Cheerio would need per-site CSS selector rules. Readability works across sites without configuration.
 
 **Why link extraction uses raw HTML and not Readability output?**
 
-Readability intentionally strips navigation and structural elements to isolate article content. Those stripped elements often contain the internal links we need to continue crawling. Link extraction is therefore performed on the original raw HTML, not the Readability output.
+Readability strips navigation and structural elements to isolate article content. Those stripped elements often contain the internal links needed to continue crawling. So link extraction runs on the original raw HTML.
 
 ---
 
-### Crawl Queue — `src/crawler/CrawlQueue.ts`
+### Crawl Queue (`src/crawler/CrawlQueue.ts`)
 
 A FIFO queue backed by an array plus a `Set<string>` for seen-URL deduplication.
 
-`enqueue(url, depth)` — adds an entry only if the URL has not been seen before. The seen-set is updated immediately on enqueue, not on dequeue, so a URL that appears in the outbound links of multiple pages is only enqueued once even before it is processed.
+`enqueue(url, depth)`: adds an entry only if the URL has not been seen before. The seen-set is updated on enqueue, not on dequeue, so a URL that appears in multiple pages' outbound links is only queued once.
 
-`next()` — shifts from the front of the array (FIFO = breadth-first order).
+`next()`: shifts from the front of the array (FIFO = breadth-first order).
 
-`hasSeen(url)` — external check used by `SiteCrawler` before calling `enqueue`, so it can also skip URLs already in the `PageRegistry`.
+`hasSeen(url)`: external check used by `SiteCrawler` before calling `enqueue`, so it can also skip URLs already in the `PageRegistry`.
 
-BFS order is important: it ensures that every page is reached at the minimum possible depth, which gives the most meaningful values in `index.md` and `metadata.json`.
+BFS order matters here: it ensures every page is reached at the minimum possible depth, which gives accurate depth values in `index.md` and `metadata.json`.
 
 ---
 
-### Page Registry — `src/crawler/PageRegistry.ts`
+### Page Registry (`src/crawler/PageRegistry.ts`)
 
 An in-memory store of all successfully crawled pages, keyed by URL.
 
@@ -190,13 +190,13 @@ An in-memory store of all successfully crawled pages, keyed by URL.
 
 The root path `/` becomes `index`.
 
-`makeUniqueSlug()` appends a numeric counter (`-2`, `-3`, ...) if the base slug is already in the registry's `usedSlugs` set. This guarantees that two different URLs that map to the same slug never overwrite each other's files.
+`makeUniqueSlug()` appends a numeric counter (`-2`, `-3`, ...) if the base slug is already taken. Two different URLs that produce the same slug will never overwrite each other's files.
 
 ---
 
-### URL Filter — `src/crawler/UrlFilter.ts`
+### URL Filter (`src/crawler/UrlFilter.ts`)
 
-Stateless filter for deciding which URLs the crawler is allowed to follow.
+Stateless filter for deciding which URLs the crawler follows.
 
 **`allow(url)`** applies rules in this order:
 
@@ -209,13 +209,13 @@ Stateless filter for deciding which URLs the crawler is allowed to follow.
 7. If `--include` prefixes were specified, the pathname must start with at least one of them
 8. Pathname must not start with any `--exclude` prefix
 
-Rules are checked in short-circuit order. A URL that fails rule 2 never reaches rule 7.
+Rules short-circuit. A URL that fails rule 2 never reaches rule 7.
 
-**`normalize(url)`** strips the hash, strips the query string, and removes trailing slashes (except for the root `/`). This canonical form is what is stored in the queue and registry, ensuring that `https://site.com/page?ref=nav` and `https://site.com/page` are treated as the same URL.
+**`normalize(url)`** strips the hash, query string, and trailing slashes (except for the root `/`). This canonical form is stored in the queue and registry, so `https://site.com/page?ref=nav` and `https://site.com/page` are treated as the same URL.
 
-**Git Bash path normalisation:**
+**Git Bash path normalization:**
 
-On Windows, Git Bash expands bare POSIX paths passed as arguments. `/docs` becomes `C:/Program Files/Git/docs` before the process receives it. `normalizePathPrefix()` detects this pattern by looking for known Git/MSYS/Cygwin/MinGW root directory names and recovers the original path suffix. For generic Windows absolute paths without those markers, it strips the drive letter and first directory.
+On Windows, Git Bash expands bare POSIX paths passed as arguments. `/docs` becomes `C:/Program Files/Git/docs` before the process receives it. `normalizePathPrefix()` detects this by looking for known Git/MSYS/Cygwin/MinGW root directory names and recovers the original path suffix. For generic Windows absolute paths without those markers, it strips the drive letter and first directory.
 
 ---
 
@@ -225,15 +225,15 @@ Three focused modules, each with a single responsibility.
 
 **`parser/readability.ts`**
 
-Wraps `jsdom` and `@mozilla/readability`. Creates a JSDOM virtual DOM from the raw HTML string (with the page URL passed as the base URL so relative resources resolve correctly), runs Readability's `parse()`, and returns `{ title, content }` where `content` is an HTML string of the main article body. Returns `{ title: "Untitled", content: "" }` on failure.
+Wraps `jsdom` and `@mozilla/readability`. Creates a JSDOM virtual DOM from the raw HTML string (with the page URL as the base so relative resources resolve correctly), runs Readability's `parse()`, and returns `{ title, content }` where `content` is an HTML string of the main article body. Returns `{ title: "Untitled", content: "" }` on failure.
 
 **`parser/htmlParser.ts`**
 
-Cheerio-based helpers for extracting information from raw HTML. Currently used for link extraction in `SiteCrawler.ts` via the `extractLinks()` function, which selects all `a[href]` elements and resolves each href to an absolute URL using the native `URL` constructor.
+Cheerio-based helpers for extracting data from raw HTML. Used for link extraction in `SiteCrawler.ts` via `extractLinks()`, which selects all `a[href]` elements and resolves each href to an absolute URL using the native `URL` constructor.
 
 **`parser/markdown.ts`**
 
-Wraps [Turndown](https://github.com/mixmark-io/turndown). Converts an HTML string to Markdown. Turndown handles common HTML elements — headings, paragraphs, lists, code blocks, tables, links, images — and produces clean, readable Markdown with minimal noise.
+Wraps [Turndown](https://github.com/mixmark-io/turndown). Converts HTML to Markdown. Turndown handles headings, paragraphs, lists, code blocks, tables, links, and images.
 
 ---
 
@@ -258,34 +258,34 @@ Each file follows this structure:
 - [Title B](./slug-b.md)
 ```
 
-The Related Pages section is built by looking up each URL in `page.outboundUrls` against the `PageRegistry`. Only URLs that were successfully crawled produce entries. Links are relative file paths within the `pages/` directory, so the knowledge base is navigable offline without any server.
+The Related Pages section is built by looking up each URL in `page.outboundUrls` against the `PageRegistry`. Only URLs that were successfully crawled get entries. Links are relative paths within `pages/`, so the knowledge base works offline.
 
 **`exporters/chunkWriter.ts`**
 
 Splits each page's Markdown on `##` heading boundaries and writes one file per chunk.
 
-`splitIntoChunks()` processes the Markdown line by line. When it encounters a line starting with `## `, it flushes the current accumulated lines as a chunk and starts a new one with that heading. Content before the first `##` heading is treated as a chunk with an empty heading (the frontmatter will omit the `section` field for these).
+`splitIntoChunks()` processes the Markdown line by line. When it hits a `## ` line, it flushes the current accumulated lines as a chunk and starts a new one. Content before the first `##` heading is treated as a chunk with an empty heading (the frontmatter omits `section` for these).
 
 Each chunk file is written to `output/<hostname>/chunks/<page-slug>/chunk-NNN.md` with zero-padded three-digit numbering.
 
 `buildFrontmatter()` produces the YAML block:
 
-- `source` — the original URL of the page
-- `title` — the page title from Readability
-- `page` — relative path to the full page file
-- `chunk` — 1-based index of this chunk within the page
-- `total` — total number of chunks for this page
-- `section` — the `##` heading text (omitted if the chunk precedes all headings)
+- `source`: the original URL of the page
+- `title`: the page title from Readability
+- `page`: relative path to the full page file
+- `chunk`: 1-based index of this chunk within the page
+- `total`: total number of chunks for this page
+- `section`: the `##` heading text (omitted if the chunk precedes all headings)
 
-This frontmatter schema is designed for direct ingestion by vector store loaders that read YAML frontmatter as document metadata.
+This schema works directly with vector store loaders that read YAML frontmatter as document metadata.
 
 **`exporters/siteIndexWriter.ts`**
 
 Writes three files:
 
-`index.md` — a Markdown table of all pages sorted by depth then slug, with columns for title (linked to the page file), word count, estimated reading time, depth, and source URL. Reading time is calculated at 200 words per minute with a minimum of 1 minute. Any failed URLs are listed in a separate section at the bottom.
+`index.md`: a Markdown table of all pages sorted by depth then slug, with columns for title (linked to the page file), word count, estimated reading time, depth, and source URL. Reading time is at 200 wpm with a minimum of 1 minute. Failed URLs are listed in a separate section at the bottom.
 
-`sitemap.json` — a JSON array where each entry contains:
+`sitemap.json`: a JSON array where each entry contains:
 
 ```json
 {
@@ -300,13 +300,13 @@ Writes three files:
 }
 ```
 
-`linksTo` is resolved from the page's outbound URLs through the registry. Only URLs that were actually crawled appear. This forms a navigable page graph that an agent or tool can traverse without reading individual files.
+`linksTo` is resolved from the page's outbound URLs through the registry. Only crawled URLs appear. This is a page graph an agent can traverse without reading individual files.
 
-`metadata.json` — the full `CrawlStats` object serialised as JSON.
+`metadata.json`: the full `CrawlStats` object as JSON.
 
 **`exporters/markdownExport.ts` and `exporters/jsonExport.ts`**
 
-Single-file exporters used in single-page mode. Write a `.md` or `.json` file to a specified output path.
+Single-file exporters for single-page mode. Write a `.md` or `.json` file to a specified output path.
 
 ---
 
@@ -314,7 +314,7 @@ Single-file exporters used in single-page mode. Write a `.md` or `.json` file to
 
 **`utils/fetch.ts`**
 
-Thin Axios wrapper with a `Mozilla/5.0 web2md` User-Agent header. In single-page mode (used directly) it exits the process on failure. In crawl mode the inlined `fetchHTML()` inside `SiteCrawler.ts` is used instead, which throws on failure so the caller can log and continue rather than exit.
+Thin Axios wrapper with a `Mozilla/5.0 crawl2md` User-Agent header. In single-page mode it exits the process on failure. In crawl mode the `fetchHTML()` inside `SiteCrawler.ts` throws on failure so the caller can log and continue.
 
 **`utils/slugify.ts`**
 
@@ -347,34 +347,34 @@ URL string
 
 **Sequential crawling**
 
-The BFS loop is synchronous — one page at a time with an `await` on each fetch. This means a 100-page site with an average 300ms round-trip time takes around 30 seconds. The trade-off is simplicity and compliance: concurrent fetching risks triggering rate limits or IP bans on documentation hosts, and adds complexity around shared state in the queue and registry. For the intended use case (running once to build a local knowledge base), the sequential approach is acceptable.
+The BFS loop is sequential, one page at a time. A 100-page site at 300ms average round-trip takes about 30 seconds. Concurrent fetching would be faster but risks rate limits or IP bans on documentation hosts, and adds complexity around shared queue and registry state. For a tool you run once to build a local knowledge base, sequential is fine.
 
 **In-memory registry**
 
-All `PageRecord` objects are held in memory for the lifetime of the crawl. For sites with thousands of pages and long articles this could become a constraint. The current design targets documentation sites in the tens-to-low-hundreds of pages range. A streaming or disk-backed registry would be the right upgrade path for larger crawls.
+All `PageRecord` objects are held in memory for the lifetime of the crawl. This works fine for documentation sites in the tens-to-low-hundreds of pages. For larger crawls, a streaming or disk-backed registry would be the right next step.
 
 **Readability as the only content extractor**
 
-Readability is excellent at article content but can struggle with certain page structures — heavy JavaScript-rendered SPAs, pages where the main content is in a `<section>` that Readability does not identify as the article body, or pages with no prose at all (pure table or code). Pages where Readability returns empty content are silently skipped. This is the correct behaviour: writing an empty or near-empty file adds noise to the knowledge base.
+Readability handles article content well but can struggle with heavy JavaScript-rendered SPAs, pages where the main content isn't in a block it recognizes, or pages with no prose (pure tables or code). Pages that return empty content are silently skipped. Writing an empty file just adds noise.
 
 **No JavaScript rendering**
 
-Axios fetches the raw server-rendered HTML. Pages that require JavaScript execution to render their content (React, Vue, Next.js client-side routes) will return either empty content or only the static shell. This is a deliberate constraint — adding a headless browser would make the tool significantly heavier. For JS-rendered sites, a pre-rendered or SSR version of the content is required.
+Axios fetches raw server-rendered HTML. Pages that need JavaScript to render (React, Vue, Next.js client-side routes) will return empty content or just the static shell. Adding a headless browser would make the tool much heavier. For JS-rendered sites, use a pre-rendered or SSR URL.
 
 **Chunk boundary at `##` only**
 
-Chunks are split on second-level headings only. This produces chunks that are semantically coherent sections of a page. Splitting on every heading level would produce fragments that lack context; not splitting at all would produce chunks too large to embed efficiently. The `##` level is a reasonable default for most documentation structures, where `#` is the page title and `##` marks major sections.
+Chunks split on second-level headings. This produces semantically coherent sections. Splitting on every heading level creates fragments that lack context; not splitting at all creates chunks too large to embed efficiently. `##` is the right default for documentation where `#` is the page title and `##` marks major sections.
 
 ---
 
 ## Output as a Knowledge Base
 
-The `output/<hostname>/` directory is designed to be self-contained and directly usable:
+The `output/<hostname>/` directory is self-contained and ready to use:
 
-- An agent can read `index.md` to understand what pages exist and navigate by title
-- An agent can read `sitemap.json` to programmatically traverse the page graph without reading individual files
-- An agent can read `metadata.json` to understand the provenance, coverage, and settings of the crawl
-- Each `pages/*.md` file is a clean, self-contained document with relative links to related pages
-- Each `chunks/<slug>/chunk-NNN.md` file is a RAG-ready embedding unit with all necessary metadata in its frontmatter
+- `index.md`: what pages exist, navigable by title
+- `sitemap.json`: the page graph, traversable without reading individual files
+- `metadata.json`: provenance, coverage, and settings of the crawl
+- `pages/*.md`: clean documents with relative links to related pages
+- `chunks/<slug>/chunk-NNN.md`: RAG-ready embedding units with all metadata in frontmatter
 
-The intent is that the entire `output/<hostname>/` directory can be committed to a repository, referenced by an agent configuration, or loaded into a vector store — and the agent can then work entirely from local content with no further web access required.
+You can commit the whole directory to a repo, point an agent config at it, or load it into a vector store. The agent works entirely from local content with no further web access needed.
