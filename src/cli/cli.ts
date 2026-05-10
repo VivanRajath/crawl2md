@@ -7,7 +7,7 @@ export function runCLI() {
   const program = new Command();
 
   program
-    .name("web2md")
+    .name("crawl2md")
     .description("Convert websites into markdown knowledge directories")
     .argument("<url>", "Website URL")
     .option("--crawl", "Follow internal links (default: single page only)")
@@ -16,6 +16,7 @@ export function runCLI() {
     .option("--include <path>", "Only crawl URLs under this path prefix (repeatable)", collect, [])
     .option("--exclude <path>", "Skip URLs under this path prefix (repeatable)", collect, [])
     .option("--chunks", "Also write RAG-ready chunks with YAML frontmatter")
+    .option("--output <dir>", "Output directory (default: output/<hostname>)")
     .action(async (url, options) => {
       await runSiteCrawler(url, {
         maxDepth: options.crawl ? parseInt(options.depth) : 0,
@@ -23,6 +24,7 @@ export function runCLI() {
         include: options.include,
         exclude: options.exclude,
         chunks: options.chunks ?? false,
+        outputDir: options.output,
       });
     });
 

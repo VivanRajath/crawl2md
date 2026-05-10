@@ -122,6 +122,7 @@ section: "Installation"
 | `--include <path>` | none | Only crawl URLs whose path starts with this prefix. Repeatable. |
 | `--exclude <path>` | none | Skip URLs whose path starts with this prefix. Repeatable. |
 | `--chunks` | off | Write RAG-ready chunk files under `chunks/` |
+| `--output <dir>` | `output/<hostname>` | Write output to this directory instead of the default |
 
 ---
 

@@ -17,6 +17,7 @@ export interface CrawlOptions {
   include?: string[];
   exclude?: string[];
   chunks?: boolean;
+  outputDir?: string;
 }
 
 export interface CrawlStats {
@@ -48,7 +49,7 @@ export interface CrawlResult {
 
 async function fetchHTML(url: string): Promise<string> {
   const response = await axios.get(url, {
-    headers: { "User-Agent": "Mozilla/5.0 web2md" },
+    headers: { "User-Agent": "Mozilla/5.0 crawl2md" },
     timeout: 10000,
   });
   return response.data;
@@ -162,7 +163,9 @@ export async function runSiteCrawler(
   console.log(`\nCrawl complete. ${registry.size()} pages in ${(durationMs / 1000).toFixed(1)}s`);
 
   const hostname = new URL(seedUrl).hostname;
-  const outputDir = path.join("output", hostname);
+  const outputDir = options.outputDir
+    ? path.resolve(options.outputDir)
+    : path.join(process.cwd(), "output", hostname);
   fs.mkdirSync(outputDir, { recursive: true });
 
   writePages(registry, outputDir);
@@ -195,7 +198,7 @@ export async function runSiteCrawler(
 
   writeSiteIndex(registry, outputDir, stats);
 
-  console.log(`Output: output/${hostname}/`);
+  console.log(`Output: ${outputDir}`);
 
   return { registry, hostname, stats };
 }
