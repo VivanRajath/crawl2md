@@ -74,13 +74,13 @@ Output is written to `output/example.com/`.
 
 ### Full-site crawl
 
-Crawls a site by following internal links from the seed URL up to a configurable depth. Writes a structured knowledge directory to `output/<hostname>/`.
+Crawls a site by following internal links from the seed URL up to a configurable depth.
 
 ```bash
 npx crawl2md https://docs.example.com --crawl
 ```
 
-The crawl runs as a BFS (breadth-first search). The seed URL is enqueued at depth 0. Each discovered internal link is enqueued at `parent depth + 1`. Pages at depth greater than `--depth` are not fetched.
+The crawl runs BFS (breadth-first). The seed URL is enqueued at depth 0. Each discovered internal link is enqueued at `parent depth + 1`. Pages beyond `--depth` are not fetched.
 
 ---
 
@@ -90,14 +90,114 @@ The crawl runs as a BFS (breadth-first search). The seed URL is enqueued at dept
 |---|---|---|---|
 | `--crawl` | boolean | off | Enable site-crawl mode. Without this, only the seed URL is fetched. |
 | `--depth <n>` | integer | `3` | Maximum BFS depth from the seed URL. |
-| `--max-pages <n>` | integer | `50` | Hard cap on total successfully crawled pages. Crawl stops when this is reached regardless of remaining queue. |
+| `--max-pages <n>` | integer | `50` | Hard cap on total successfully crawled pages. |
 | `--include <path>` | string | none | Restrict crawl to URLs whose pathname starts with this prefix. Can be repeated. |
 | `--exclude <path>` | string | none | Skip URLs whose pathname starts with this prefix. Can be repeated. |
-| `--chunks` | boolean | off | After writing pages, split each page on `##` headings and write chunk files with YAML frontmatter. |
+| `--output <dir>` | string | `output/<hostname>` | Write output to this directory instead of the default. |
 
 ---
 
-## 5. Crawl Examples
+## 5. Chunking Options
+
+Chunking splits each page into smaller pieces for RAG ingestion. Requires `--chunks`.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--chunks` | boolean | off | Enable chunk output under `chunks/`. |
+| `--chunk-size <n>` | integer | `512` | Max tokens per chunk (1 token ≈ 4 chars). |
+| `--chunk-overlap <n>` | integer | `50` | Overlap tokens carried from the previous chunk into the next. |
+| `--chunk-strategy <s>` | string | `heading` | Strategy: `heading`, `paragraph`, or `token`. |
+
+**Strategies:**
+
+- `heading`: split on `##` boundaries. Oversized heading sections are sub-split on paragraphs. Best for well-structured docs.
+- `paragraph`: split on blank-line boundaries and group until the size limit is reached. Good for sites with poor heading structure.
+- `token`: fixed-size sliding window, ignores document structure. Guaranteed uniform chunk sizes.
+
+---
+
+## 6. Embedding Export
+
+Generates a single file containing all chunks with metadata, ready to upsert into a vector database after you add embedding vectors.
+
+```bash
+npx crawl2md https://docs.example.com --crawl --embeddings
+npx crawl2md https://docs.example.com --crawl --embeddings --embeddings-format pinecone
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--embeddings` | boolean | off | Write embedding export file. |
+| `--embeddings-format <fmt>` | string | `generic` | Output format: `generic`, `pinecone`, `chroma`, `qdrant`, `weaviate`. |
+
+Output files:
+
+| Format | File | Shape |
+|---|---|---|
+| `generic` | `embeddings.jsonl` | `{ id, text, metadata }` per line |
+| `pinecone` | `embeddings.jsonl` | `{ id, metadata: { text, ... } }` per line |
+| `chroma` | `embeddings.json` | `{ ids, documents, metadatas }` arrays |
+| `qdrant` | `embeddings.json` | `{ points: [{ id, payload }] }` |
+| `weaviate` | `embeddings.jsonl` | `{ class: "Chunk", properties }` per line |
+
+No embedding API calls are made. The text field is what you pass to your embedding model.
+
+---
+
+## 7. Agent Export Mode
+
+Produces structured JSON per page plus a knowledge graph, designed to be consumed directly by AI agents.
+
+```bash
+npx crawl2md https://docs.example.com --crawl --format agent
+```
+
+Output goes to `agent/` inside the output directory.
+
+**Per-page file (`agent/<slug>.json`):**
+
+```json
+{
+  "url": "https://...",
+  "title": "Getting Started",
+  "summary": "First paragraph of page content.",
+  "concepts": ["authentication", "api key"],
+  "apis": [{ "method": "GET", "path": "/api/v1/users" }],
+  "codeLanguages": ["bash", "python"],
+  "externalLinks": ["https://stripe.com/docs"],
+  "internalLinks": ["pages/api-reference.md"],
+  "entities": {
+    "packages": ["axios", "express"],
+    "envVars": ["API_KEY", "DATABASE_URL"]
+  }
+}
+```
+
+**`agent/knowledge-graph.json`:** array of all pages with their concepts and internal link targets. An agent can traverse this to find relevant pages without reading every file.
+
+All extraction is heuristic (regex-based). No LLM calls are made.
+
+---
+
+## 8. Incremental Crawling
+
+Only re-crawl pages that changed since the last run. Useful for large sites, CI pipelines, and keeping a knowledge base in sync.
+
+```bash
+npx crawl2md https://docs.example.com --crawl --update
+```
+
+How it works:
+
+1. On first run, a `.crawl-cache.json` file is written to the output directory with a content hash, ETag, and metadata for every crawled page.
+2. On subsequent `--update` runs, each URL is fetched with `If-None-Match` / `If-Modified-Since` headers. A `304 Not Modified` response means the page is skipped immediately.
+3. If the server ignores conditional headers, the response body is hashed and compared to the stored hash. Same hash means the page is skipped.
+4. Skipped pages are restored from cache into the registry so `index.md` and `sitemap.json` still reflect the full site.
+5. The cache is rewritten at the end of every run.
+
+---
+
+## 9. Crawl Examples
 
 Crawl the entire site with defaults (depth 3, 50 pages):
 
@@ -117,29 +217,33 @@ Crawl at depth 5, skip blog and changelog:
 npx crawl2md https://site.com --crawl --depth 5 --exclude /blog --exclude /changelog
 ```
 
-Crawl multiple path prefixes and exclude an internal sub-path:
+Crawl with paragraph chunking (good for poorly structured sites):
 
 ```bash
-npx crawl2md https://site.com --crawl --include /api --include /guides --exclude /api/internal
+npx crawl2md https://site.com --crawl --chunks --chunk-strategy paragraph --chunk-size 400
 ```
 
-Crawl and produce RAG-ready chunk files:
+Crawl with token chunking and overlap for dense technical docs:
 
 ```bash
-npx crawl2md https://docs.example.com --crawl --chunks
+npx crawl2md https://site.com --crawl --chunks --chunk-strategy token --chunk-size 512 --chunk-overlap 100
 ```
 
-Crawl with maximum coverage:
+Full pipeline: crawl, chunk, embeddings, agent export, incremental on next run:
 
 ```bash
-npx crawl2md https://docs.example.com --crawl --depth 10 --max-pages 500 --chunks
+# First run
+npx crawl2md https://docs.example.com --crawl --chunks --embeddings --format agent --output ./kb
+
+# Subsequent runs (only changed pages)
+npx crawl2md https://docs.example.com --crawl --chunks --embeddings --format agent --output ./kb --update
 ```
 
-> Windows + Git Bash: Git Bash expands bare path arguments like `/docs` into absolute Windows paths like `C:/Program Files/Git/docs`. The tool normalizes these automatically. Pass paths as `/docs` regardless of shell.
+> Windows + Git Bash: Git Bash expands bare path arguments like `/docs` into absolute Windows paths. The tool normalizes these automatically. Pass paths as `/docs` regardless of shell.
 
 ---
 
-## 6. URL Filtering Rules
+## 10. URL Filtering Rules
 
 These rules are applied automatically before any URL is enqueued. No configuration needed.
 
@@ -165,13 +269,13 @@ These rules are applied automatically before any URL is enqueued. No configurati
 /feed  /rss  /sitemap
 ```
 
-**Query strings:** Stripped from all URLs before deduplication. `https://site.com/page?utm_source=x` and `https://site.com/page` are the same URL.
+**Query strings:** Stripped before deduplication. `https://site.com/page?utm_source=x` and `https://site.com/page` are the same URL.
 
-**Trailing slashes:** Stripped before deduplication. `https://site.com/docs/` and `https://site.com/docs` are the same URL.
+**Trailing slashes:** Stripped before deduplication.
 
 ---
 
-## 7. Output Structure
+## 11. Output Structure
 
 ### Single-page mode
 
@@ -184,30 +288,20 @@ These rules are applied automatically before any URL is enqueued. No configurati
 ```
 output/
 └── <hostname>/
-    ├── index.md           # table: title, word count, reading time, depth, URL
-    ├── sitemap.json       # page graph with slug to linked slugs
-    ├── metadata.json      # crawl stats: duration, attempted, succeeded, skipped, failed URLs, options
+    ├── index.md              # table: title, word count, reading time, depth, URL
+    ├── sitemap.json          # page graph with slug to linked slugs
+    ├── metadata.json         # full crawl stats including options used
+    ├── embeddings.jsonl      # present when --embeddings is passed
+    ├── .crawl-cache.json     # present when --update has been used
     ├── pages/
-    │   ├── getting-started.md
-    │   ├── api-reference.md
-    │   └── ...            # one .md per crawled page, with a Related Pages section at the bottom
-    └── chunks/            # only written when --chunks is passed
-        ├── getting-started/
-        │   ├── chunk-001.md
-        │   ├── chunk-002.md
-        │   └── ...
-        └── ...
+    │   └── ...               # one .md per crawled page, with Related Pages section
+    ├── chunks/               # present when --chunks is passed
+    │   └── <slug>/
+    │       └── chunk-NNN.md
+    └── agent/                # present when --format agent is passed
+        ├── <slug>.json
+        └── knowledge-graph.json
 ```
-
-#### index.md columns
-
-| Column | Content |
-|---|---|
-| Page | Linked title pointing to the page file |
-| Words | Word count of the Markdown content |
-| Read | Estimated reading time in minutes (at 200 wpm) |
-| Depth | BFS depth at which this page was reached |
-| URL | Original source URL |
 
 #### metadata.json fields
 
@@ -215,43 +309,22 @@ output/
 |---|---|
 | `seedUrl` | Normalized starting URL |
 | `crawledAt` | ISO 8601 timestamp when the crawl began |
-| `durationMs` | Total wall-clock time for the crawl in milliseconds |
-| `attempted` | Total fetch attempts (including failures) |
-| `succeeded` | Pages successfully parsed and written |
-| `skipped` | Attempts that failed fetch or parse |
+| `durationMs` | Total wall-clock time in milliseconds |
+| `attempted` | Total URLs dequeued for processing |
+| `succeeded` | Pages fully fetched, parsed, and written |
+| `cachedPages` | Pages skipped because content was unchanged (incremental mode) |
+| `skipped` | Pages that failed to fetch or parse |
 | `totalWords` | Combined word count across all pages |
 | `avgWordsPerPage` | Mean word count |
-| `maxDepthReached` | Deepest BFS level of any successfully crawled page |
-| `totalChunks` | Total chunk files written (0 if `--chunks` not passed) |
+| `maxDepthReached` | Deepest BFS level reached |
+| `totalChunks` | Total chunk files written |
+| `embeddingRecords` | Total embedding records written |
 | `failedUrls` | List of URLs that failed to fetch or parse |
-| `options` | The resolved crawl options used for this run |
-
-#### Chunk frontmatter
-
-```yaml
----
-source: "https://docs.example.com/getting-started"
-title: "Getting Started"
-page: "pages/getting-started.md"
-chunk: 1
-total: 4
-section: "Installation"
----
-```
-
-The `section` field is omitted if the chunk has no `##` heading (introductory content before the first heading).
+| `options` | The full set of options used for this run |
 
 ---
 
-## 8. Slug Generation and Collision Handling
-
-Filenames are derived from the URL pathname. The pathname is lowercased, leading and trailing slashes are stripped, path separators are replaced with dashes, and all non-word characters are replaced with dashes. Consecutive dashes are collapsed. The root path `/` produces the slug `index`.
-
-If two URLs produce the same base slug, a numeric suffix is appended: `slug`, `slug-2`, `slug-3`, and so on.
-
----
-
-## 9. Command Reference
+## 12. Command Reference
 
 ### Using the published package
 
@@ -272,40 +345,45 @@ If two URLs produce the same base slug, a numeric suffix is appended: `slug`, `s
 
 ---
 
-## 10. Source Layout
+## 13. Source Layout
 
 ```
 src/
-├── index.ts                   Entry point, calls runCLI()
+├── index.ts                    Entry point, calls runCLI()
 ├── cli/
-│   └── cli.ts                 Commander argument parsing, routes to crawl or single-page
+│   └── cli.ts                  Commander argument parsing, routes to crawl or single-page
 ├── crawler/
-│   ├── SiteCrawler.ts         BFS crawl loop, orchestrates all sub-modules, writes output
-│   ├── CrawlQueue.ts          FIFO queue with a seen-set for deduplication
-│   ├── PageRegistry.ts        In-memory store of PageRecord objects, slug uniqueness enforcement
-│   └── UrlFilter.ts           Allow/deny rules, URL normalization, Git Bash path handling
+│   ├── SiteCrawler.ts          BFS crawl loop, orchestrates all sub-modules, writes output
+│   ├── CrawlQueue.ts           FIFO queue with a seen-set for deduplication
+│   ├── PageRegistry.ts         In-memory store of PageRecord objects, slug uniqueness enforcement
+│   ├── UrlFilter.ts            Allow/deny rules, URL normalization, Git Bash path handling
+│   └── CrawlCache.ts           Content hash cache for incremental crawl mode
 ├── parser/
-│   ├── readability.ts         Mozilla Readability wrapper, extracts article title and HTML content
-│   ├── htmlParser.ts          Cheerio-based link extraction helpers
-│   └── markdown.ts            Turndown HTML-to-Markdown converter
+│   ├── readability.ts          Mozilla Readability wrapper, extracts article title and HTML content
+│   ├── htmlParser.ts           Cheerio-based link extraction helpers
+│   ├── markdown.ts             Turndown HTML-to-Markdown converter
+│   └── extractors.ts           Heuristic extractors: summary, concepts, APIs, packages, env vars
 ├── exporters/
-│   ├── markdownExport.ts      Writes a single .md file to disk
-│   ├── jsonExport.ts          Writes a single .json file to disk
-│   ├── pageWriter.ts          Writes all crawled pages with a Related Pages section
-│   ├── siteIndexWriter.ts     Writes index.md, sitemap.json, metadata.json
-│   └── chunkWriter.ts         Splits pages by ## headings, writes chunk files with frontmatter
+│   ├── markdownExport.ts       Writes a single .md file to disk
+│   ├── jsonExport.ts           Writes a single .json file to disk
+│   ├── pageWriter.ts           Writes all crawled pages with a Related Pages section
+│   ├── chunkWriter.ts          Splits pages by strategy, writes chunk files with frontmatter
+│   ├── embeddingWriter.ts      Writes embedding-ready JSONL/JSON for vector databases
+│   ├── agentWriter.ts          Writes per-page agent JSON and knowledge-graph.json
+│   └── siteIndexWriter.ts      Writes index.md, sitemap.json, metadata.json
 └── utils/
-    ├── fetch.ts               Axios HTTP wrapper with User-Agent header
-    ├── slugify.ts             URL to safe filename slug with collision suffix logic
-    └── url.ts                 URL to default output filename for single-page mode
+    ├── fetch.ts                Axios HTTP wrapper with User-Agent header
+    ├── slugify.ts              URL to safe filename slug with collision suffix logic
+    └── url.ts                  URL to default output filename for single-page mode
 ```
 
 ---
 
-## 11. Known Behaviors
+## 14. Known Behaviors
 
-- Pages that return HTTP errors or that Readability cannot parse are skipped and logged. Their URLs appear in `metadata.json` under `failedUrls`.
-- Pages with no extractable content (empty Readability result) are silently skipped and do not appear in `failedUrls`.
+- Pages that return HTTP errors or that Readability cannot parse are skipped and logged under `failedUrls` in `metadata.json`.
+- Pages with no extractable content (empty Readability result) are silently skipped.
 - The crawl is sequential with no concurrent fetching. This keeps things simple and avoids rate-limit bans on most documentation hosts.
-- Only `##`-level headings trigger chunk boundaries. `###` and deeper headings stay inside the chunk of the `##` section they belong to.
-- The `output/` directory is created relative to the current working directory.
+- Only `##`-level headings trigger chunk boundaries in `heading` strategy. `###` and deeper stay inside the parent section.
+- In `--update` mode, embedding and agent exports only include new or changed pages (cached pages have no markdown content in memory). Run without `--update` periodically to regenerate complete embedding/agent exports.
+- The `output/` directory is created relative to the current working directory unless `--output` is specified.

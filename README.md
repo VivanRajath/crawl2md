@@ -41,20 +41,22 @@ When an AI agent researches a webpage, most of its context window goes to mechan
 
 crawl2md moves that overhead off the agent and onto your local filesystem. Run it once against a URL or a full site. It fetches, parses, and converts every page to plain Markdown, then writes everything to a structured directory. After that, an agent reads local files with no HTTP requests, no HTML parsing, just content.
 
-With `--chunks`, every page is split on its `##` headings into individual chunk files with YAML frontmatter (source URL, page title, section heading, chunk index, total count). Drop these directly into a vector store.
+With `--chunks`, every page is split into chunk files with YAML frontmatter ready to drop into a vector store. With `--format agent`, each page is analyzed and exported as structured JSON with summaries, APIs, concepts, and a knowledge graph.
 
 ---
 
 ## Features
 
-- Single-page fetch: convert any URL to a `.md` file in one command
-- Full-site crawl: follow internal links up to a configurable depth and page cap
-- RAG-ready chunking: split pages by `##` headings into chunk files with YAML frontmatter
-- Hierarchical output directory: `pages/`, `chunks/`, `index.md`, `sitemap.json`, `metadata.json`
+- Single-page fetch or full-site crawl with depth and page cap controls
+- RAG-ready chunking: heading, paragraph, or token-based strategies with configurable size and overlap
+- Embedding export: JSONL/JSON formatted for Pinecone, Chroma, Qdrant, Weaviate, or generic use
+- Agent export mode: per-page JSON with summaries, concepts, APIs, packages, env vars, and a knowledge graph
+- Incremental crawling: skip unchanged pages using content hashing and HTTP conditional requests
 - URL filtering: include or exclude specific path prefixes
 - Automatic noise removal: skips assets, login pages, feeds, admin paths, and fragment URLs
 - Slug collision prevention: unique filenames even when two URLs map to the same slug
-- Related page links: each page ends with a `## Related Pages` section
+- Related page links: each page ends with a Related Pages section
+- Custom output directory via `--output`
 - Windows Git Bash support: path arguments like `/docs` are normalized automatically
 
 ---
@@ -68,11 +70,20 @@ npx crawl2md https://example.com
 # Crawl an entire site
 npx crawl2md https://docs.example.com --crawl
 
-# Crawl with RAG chunks
-npx crawl2md https://docs.example.com --crawl --chunks
+# Crawl with RAG chunks (token-aware, with overlap)
+npx crawl2md https://docs.example.com --crawl --chunks --chunk-size 512 --chunk-overlap 50
 
-# Crawl a specific section only
-npx crawl2md https://docs.example.com --crawl --include /guides --max-pages 100
+# Generate embedding-ready export for Pinecone
+npx crawl2md https://docs.example.com --crawl --embeddings --embeddings-format pinecone
+
+# Agent-optimized export with knowledge graph
+npx crawl2md https://docs.example.com --crawl --format agent
+
+# Only re-crawl pages that changed since last run
+npx crawl2md https://docs.example.com --crawl --update
+
+# Write output to a specific directory
+npx crawl2md https://docs.example.com --crawl --output ./my-knowledge-base
 ```
 
 ---
@@ -82,22 +93,25 @@ npx crawl2md https://docs.example.com --crawl --include /guides --max-pages 100
 ```
 output/
 └── docs.example.com/
-    ├── index.md           # table of all pages with word counts and depth
-    ├── sitemap.json       # page graph with links between slugs
-    ├── metadata.json      # crawl stats: duration, attempted, succeeded, failed URLs
+    ├── index.md              # table of all pages with word counts and depth
+    ├── sitemap.json          # page graph with links between slugs
+    ├── metadata.json         # crawl stats: duration, pages, words, options
+    ├── embeddings.jsonl      # only when --embeddings is passed
+    ├── .crawl-cache.json     # only when --update is used (internal cache)
     ├── pages/
     │   ├── getting-started.md
-    │   ├── api-reference.md
     │   └── ...
-    └── chunks/            # only when --chunks is passed
-        ├── getting-started/
-        │   ├── chunk-001.md
-        │   ├── chunk-002.md
-        │   └── ...
-        └── ...
+    ├── chunks/               # only when --chunks is passed
+    │   └── getting-started/
+    │       ├── chunk-001.md
+    │       └── ...
+    └── agent/                # only when --format agent is passed
+        ├── getting-started.json
+        ├── ...
+        └── knowledge-graph.json
 ```
 
-Each chunk file has YAML frontmatter:
+**Chunk frontmatter:**
 
 ```yaml
 ---
@@ -108,6 +122,25 @@ chunk: 1
 total: 4
 section: "Installation"
 ---
+```
+
+**Agent page JSON:**
+
+```json
+{
+  "url": "https://...",
+  "title": "Getting Started",
+  "summary": "First paragraph of the page...",
+  "concepts": ["authentication", "api key", "rate limiting"],
+  "apis": [{ "method": "GET", "path": "/api/v1/users" }],
+  "codeLanguages": ["bash", "python"],
+  "externalLinks": ["https://stripe.com/docs"],
+  "internalLinks": ["pages/api-reference.md"],
+  "entities": {
+    "packages": ["axios", "express"],
+    "envVars": ["API_KEY", "DATABASE_URL"]
+  }
+}
 ```
 
 ---
@@ -122,7 +155,14 @@ section: "Installation"
 | `--include <path>` | none | Only crawl URLs whose path starts with this prefix. Repeatable. |
 | `--exclude <path>` | none | Skip URLs whose path starts with this prefix. Repeatable. |
 | `--chunks` | off | Write RAG-ready chunk files under `chunks/` |
-| `--output <dir>` | `output/<hostname>` | Write output to this directory instead of the default |
+| `--chunk-size <n>` | `512` | Max tokens per chunk (requires `--chunks`) |
+| `--chunk-overlap <n>` | `50` | Overlap tokens between adjacent chunks (requires `--chunks`) |
+| `--chunk-strategy <s>` | `heading` | Chunking strategy: `heading`, `paragraph`, `token` |
+| `--embeddings` | off | Write embedding-ready export file |
+| `--embeddings-format <fmt>` | `generic` | Format: `generic`, `pinecone`, `chroma`, `qdrant`, `weaviate` |
+| `--update` | off | Only crawl pages that changed since the last crawl |
+| `--format <fmt>` | `markdown` | Output format: `markdown`, `agent` |
+| `--output <dir>` | `output/<hostname>` | Write output to this directory |
 
 ---
 
@@ -130,7 +170,7 @@ section: "Installation"
 
 | Library | Role |
 |---|---|
-| `axios` | HTTP fetching |
+| `axios` | HTTP fetching with conditional request support |
 | `cheerio` | Link extraction from raw HTML |
 | `jsdom` + `@mozilla/readability` | Article content extraction |
 | `turndown` | HTML-to-Markdown conversion |
@@ -145,9 +185,10 @@ section: "Installation"
 src/
 ├── index.ts
 ├── cli/         cli.ts
-├── crawler/     SiteCrawler.ts  CrawlQueue.ts  PageRegistry.ts  UrlFilter.ts
-├── parser/      readability.ts  htmlParser.ts  markdown.ts
-├── exporters/   pageWriter.ts   chunkWriter.ts  siteIndexWriter.ts  markdownExport.ts  jsonExport.ts
+├── crawler/     SiteCrawler.ts  CrawlQueue.ts  PageRegistry.ts  UrlFilter.ts  CrawlCache.ts
+├── parser/      readability.ts  htmlParser.ts  markdown.ts  extractors.ts
+├── exporters/   pageWriter.ts   chunkWriter.ts  embeddingWriter.ts  agentWriter.ts
+│                siteIndexWriter.ts  markdownExport.ts  jsonExport.ts
 └── utils/       fetch.ts  slugify.ts  url.ts
 ```
 

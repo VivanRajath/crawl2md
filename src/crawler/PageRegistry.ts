@@ -45,6 +45,31 @@ export class PageRegistry {
     return record;
   }
 
+  // Used by incremental crawl to restore unchanged pages from cache without re-processing.
+  // markdownContent is empty so page/chunk writers skip re-writing existing files.
+  registerCached(
+    url: string,
+    slug: string,
+    title: string,
+    wordCount: number,
+    depth: number,
+    outboundUrls: string[]
+  ): PageRecord {
+    this.usedSlugs.add(slug);
+    const record: PageRecord = {
+      url,
+      slug,
+      filename: `${slug}.md`,
+      title,
+      depth,
+      outboundUrls,
+      markdownContent: "",
+      wordCount,
+    };
+    this.pages.set(url, record);
+    return record;
+  }
+
   get(url: string): PageRecord | undefined {
     return this.pages.get(url);
   }
