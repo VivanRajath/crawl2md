@@ -161,19 +161,36 @@ Output goes to `agent/` inside the output directory.
   "url": "https://...",
   "title": "Getting Started",
   "summary": "First paragraph of page content.",
-  "concepts": ["authentication", "api key"],
-  "apis": [{ "method": "GET", "path": "/api/v1/users" }],
-  "codeLanguages": ["bash", "python"],
-  "externalLinks": ["https://stripe.com/docs"],
-  "internalLinks": ["pages/api-reference.md"],
+  "concepts": ["authentication", "api key", "rate limiting"],
   "entities": {
+    "named": ["Pydantic", "Starlette", "uvicorn"],
     "packages": ["axios", "express"],
     "envVars": ["API_KEY", "DATABASE_URL"]
-  }
+  },
+  "apis": [{ "method": "GET", "path": "/api/v1/users" }],
+  "relationships": [
+    { "subject": "FastAPI", "predicate": "built-on", "object": "Starlette" },
+    { "subject": "FastAPI", "predicate": "uses", "object": "Pydantic" }
+  ],
+  "codeLanguages": ["bash", "python"],
+  "externalLinks": ["https://stripe.com/docs"],
+  "internalLinks": ["pages/api-reference.md"]
 }
 ```
 
-**`agent/knowledge-graph.json`:** array of all pages with their concepts and internal link targets. An agent can traverse this to find relevant pages without reading every file.
+**`agent/knowledge-graph.json`:** array of all pages. Each node includes `concepts`, `entities`, `apis`, `relationships`, and `linksTo`. An agent can traverse this graph to find relevant pages and understand how concepts and libraries connect — without reading every individual page file.
+
+**What gets extracted and how:**
+
+| Field | Source |
+|---|---|
+| `summary` | First non-heading paragraph, up to 500 chars |
+| `concepts` | H1–H3 headings, backtick/bold terms, top-frequency keywords |
+| `entities.named` | Backtick/bold terms, PascalCase words, post-introduction phrases |
+| `entities.packages` | `import`/`require`, `pip install`, `npm install`, `cargo add` |
+| `entities.envVars` | `ALL_CAPS_WORDS` inside code blocks |
+| `apis` | Prose patterns, Python decorators, Express routes, OpenAPI YAML |
+| `relationships` | 12 semantic predicate patterns + H2 co-occurrence edges |
 
 All extraction is heuristic (regex-based). No LLM calls are made.
 
@@ -362,7 +379,7 @@ src/
 │   ├── readability.ts          Mozilla Readability wrapper, extracts article title and HTML content
 │   ├── htmlParser.ts           Cheerio-based link extraction helpers
 │   ├── markdown.ts             Turndown HTML-to-Markdown converter
-│   └── extractors.ts           Heuristic extractors: summary, concepts, APIs, packages, env vars
+│   └── extractors.ts           Heuristic extractors: summary, concepts, APIs, named entities, relationships, packages, env vars
 ├── exporters/
 │   ├── markdownExport.ts       Writes a single .md file to disk
 │   ├── jsonExport.ts           Writes a single .json file to disk
@@ -385,5 +402,5 @@ src/
 - Pages with no extractable content (empty Readability result) are silently skipped.
 - The crawl is sequential with no concurrent fetching. This keeps things simple and avoids rate-limit bans on most documentation hosts.
 - Only `##`-level headings trigger chunk boundaries in `heading` strategy. `###` and deeper stay inside the parent section.
-- In `--update` mode, embedding and agent exports only include new or changed pages (cached pages have no markdown content in memory). Run without `--update` periodically to regenerate complete embedding/agent exports.
+- In `--update` mode, embedding and agent exports (including named entities, relationships, and APIs) only include new or changed pages — cached pages have no markdown content in memory. Run without `--update` periodically to regenerate complete exports.
 - The `output/` directory is created relative to the current working directory unless `--output` is specified.

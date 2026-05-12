@@ -8,6 +8,9 @@ import {
   extractCodeLanguages,
   extractPackages,
   extractEnvVars,
+  extractNamedEntities,
+  extractRelationships,
+  Relationship,
 } from "../parser/extractors.js";
 
 interface AgentPageExport {
@@ -15,14 +18,16 @@ interface AgentPageExport {
   title: string;
   summary: string;
   concepts: string[];
-  apis: Array<{ method: string; path: string }>;
-  codeLanguages: string[];
-  externalLinks: string[];
-  internalLinks: string[];
   entities: {
+    named: string[];
     packages: string[];
     envVars: string[];
   };
+  apis: Array<{ method: string; path: string }>;
+  relationships: Relationship[];
+  codeLanguages: string[];
+  externalLinks: string[];
+  internalLinks: string[];
 }
 
 export function writeAgentExport(
@@ -40,11 +45,18 @@ export function writeAgentExport(
     title: string;
     depth: number;
     concepts: string[];
+    entities: string[];
+    apis: Array<{ method: string; path: string }>;
+    relationships: Relationship[];
     linksTo: string[];
   }> = [];
 
   for (const page of allPages) {
     const concepts = extractConcepts(page.markdownContent);
+    const namedEntities = extractNamedEntities(page.markdownContent);
+    const apis = extractAPIs(page.markdownContent);
+    const relationships = extractRelationships(page.markdownContent, namedEntities);
+
     const internalLinks = page.outboundUrls
       .map((u) => registry.get(u)?.filename)
       .filter(Boolean)
@@ -55,14 +67,16 @@ export function writeAgentExport(
       title: page.title,
       summary: extractSummary(page.markdownContent),
       concepts,
-      apis: extractAPIs(page.markdownContent),
-      codeLanguages: extractCodeLanguages(page.markdownContent),
-      externalLinks: page.outboundUrls.filter((u) => !u.includes(hostname)),
-      internalLinks,
       entities: {
+        named: namedEntities,
         packages: extractPackages(page.markdownContent),
         envVars: extractEnvVars(page.markdownContent),
       },
+      apis,
+      relationships,
+      codeLanguages: extractCodeLanguages(page.markdownContent),
+      externalLinks: page.outboundUrls.filter((u) => !u.includes(hostname)),
+      internalLinks,
     };
 
     fs.writeFileSync(
@@ -77,6 +91,9 @@ export function writeAgentExport(
       title: page.title,
       depth: page.depth,
       concepts,
+      entities: namedEntities,
+      apis,
+      relationships,
       linksTo: internalLinks,
     });
   }

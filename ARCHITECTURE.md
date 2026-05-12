@@ -229,11 +229,13 @@ Rules short-circuit. A URL failing rule 2 never reaches rule 7.
 **`parser/extractors.ts`**: Heuristic extraction functions for agent export mode. All regex-based, no LLM calls.
 
 - `extractSummary`: first non-heading paragraph, up to 500 chars
-- `extractConcepts`: `##` headings + top-10 high-frequency non-stopword terms
-- `extractAPIs`: HTTP method + path patterns (`GET /api/v1/users`) from anywhere in the text
+- `extractConcepts`: H1–H3 headings + backtick-wrapped terms + bold/italic terms + top-15 high-frequency non-stopword terms; cap raised to 30
+- `extractAPIs`: HTTP method + path patterns from prose (`GET /path`), Python decorators (`@app.get("/path")`), `@app.route(...)` with `methods=[]`, Express/Fastify `app.get(...)`, and OpenAPI YAML path keys
 - `extractCodeLanguages`: fenced code block language tags
 - `extractPackages`: npm `import`/`require`, pip `install`, cargo `add` patterns
 - `extractEnvVars`: `ALL_CAPS_WORDS` found inside code blocks only (reduces false positives)
+- `extractNamedEntities` *(new)*: pulls named entities from backtick-wrapped terms, bold terms, PascalCase words in prose, and terms following introduction phrases (`such as`, `built on`, `powered by`, etc.). Returns up to 25 deduplicated entities ranked by frequency.
+- `extractRelationships` *(new)*: matches 12 semantic predicate patterns (`built-on`, `uses`, `wraps`, `extends`, `integrates-with`, `provides`, `requires`, `supports`, `implements`, `depends-on`, `compatible-with`) and adds co-occurrence `related-to` edges for entities sharing an H2 section. Only emits relationships where at least one side is a known entity from `extractNamedEntities`.
 
 ---
 
@@ -254,7 +256,7 @@ Overlap is applied as a post-processing step: the last `overlapTokens * 4` chars
 
 Chunk ID format: `<hostname>/<slug>/chunk-NNN`
 
-**`exporters/agentWriter.ts`**: Runs all extractors on each page and writes `agent/<slug>.json` plus `agent/knowledge-graph.json`. Only processes pages with non-empty `markdownContent`.
+**`exporters/agentWriter.ts`**: Runs all extractors on each page and writes `agent/<slug>.json` plus `agent/knowledge-graph.json`. Only processes pages with non-empty `markdownContent`. Each page JSON now includes `entities.named` (named entities) and `relationships` (semantic triples). The knowledge graph nodes carry `entities`, `apis`, and `relationships` in addition to `concepts` and `linksTo`, giving an LLM full structured context per node without reading individual page files.
 
 **`exporters/siteIndexWriter.ts`**: Writes `index.md` (Markdown table), `sitemap.json` (page graph), and `metadata.json` (full `CrawlStats`). Includes all registry entries regardless of whether they came from cache.
 
@@ -302,7 +304,7 @@ When `--update` is used, cached (unchanged) pages have empty `markdownContent` i
 
 **Heuristic agent extraction**
 
-All agent export fields (summary, concepts, APIs, packages, env vars) are extracted with regex patterns and frequency analysis. They are approximate. They work well on structured technical documentation and poorly on unstructured prose or JavaScript-heavy SPAs.
+All agent export fields (summary, concepts, APIs, named entities, relationships, packages, env vars) are extracted with regex patterns and frequency analysis. No LLM calls are made. Extraction quality scales with document structure: it works well on technical documentation that uses markdown formatting (backticks, bold, headings) and poorly on unstructured prose or JavaScript-heavy SPAs that produce flat text after Readability.
 
 **No JavaScript rendering**
 
@@ -324,5 +326,5 @@ The `output/<hostname>/` directory is self-contained:
 - `pages/*.md`: clean documents with relative links to related pages
 - `chunks/<slug>/chunk-NNN.md`: RAG-ready embedding units with all metadata in frontmatter
 - `embeddings.jsonl`: pre-formatted for direct vector database ingestion
-- `agent/<slug>.json`: structured knowledge for agent consumption
-- `agent/knowledge-graph.json`: concept-tagged page graph for agent navigation
+- `agent/<slug>.json`: structured knowledge per page — summary, concepts, named entities, relationships, APIs, packages, env vars
+- `agent/knowledge-graph.json`: rich page graph with concepts, entities, APIs, relationships, and link targets per node

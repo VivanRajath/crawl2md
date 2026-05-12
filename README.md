@@ -41,7 +41,7 @@ When an AI agent researches a webpage, most of its context window goes to mechan
 
 crawl2md moves that overhead off the agent and onto your local filesystem. Run it once against a URL or a full site. It fetches, parses, and converts every page to plain Markdown, then writes everything to a structured directory. After that, an agent reads local files with no HTTP requests, no HTML parsing, just content.
 
-With `--chunks`, every page is split into chunk files with YAML frontmatter ready to drop into a vector store. With `--format agent`, each page is analyzed and exported as structured JSON with summaries, APIs, concepts, and a knowledge graph.
+With `--chunks`, every page is split into chunk files with YAML frontmatter ready to drop into a vector store. With `--format agent`, each page is analyzed and exported as structured JSON with summaries, concepts, named entities, semantic relationships, APIs, and a knowledge graph — all extracted heuristically with no LLM calls.
 
 ---
 
@@ -50,7 +50,7 @@ With `--chunks`, every page is split into chunk files with YAML frontmatter read
 - Single-page fetch or full-site crawl with depth and page cap controls
 - RAG-ready chunking: heading, paragraph, or token-based strategies with configurable size and overlap
 - Embedding export: JSONL/JSON formatted for Pinecone, Chroma, Qdrant, Weaviate, or generic use
-- Agent export mode: per-page JSON with summaries, concepts, APIs, packages, env vars, and a knowledge graph
+- Agent export mode: per-page JSON with summaries, concepts, named entities, semantic relationships, APIs, packages, env vars, and a knowledge graph
 - Incremental crawling: skip unchanged pages using content hashing and HTTP conditional requests
 - URL filtering: include or exclude specific path prefixes
 - Automatic noise removal: skips assets, login pages, feeds, admin paths, and fragment URLs
@@ -132,14 +132,19 @@ section: "Installation"
   "title": "Getting Started",
   "summary": "First paragraph of the page...",
   "concepts": ["authentication", "api key", "rate limiting"],
-  "apis": [{ "method": "GET", "path": "/api/v1/users" }],
-  "codeLanguages": ["bash", "python"],
-  "externalLinks": ["https://stripe.com/docs"],
-  "internalLinks": ["pages/api-reference.md"],
   "entities": {
+    "named": ["Pydantic", "Starlette", "uvicorn"],
     "packages": ["axios", "express"],
     "envVars": ["API_KEY", "DATABASE_URL"]
-  }
+  },
+  "apis": [{ "method": "GET", "path": "/api/v1/users" }],
+  "relationships": [
+    { "subject": "FastAPI", "predicate": "built-on", "object": "Starlette" },
+    { "subject": "FastAPI", "predicate": "uses", "object": "Pydantic" }
+  ],
+  "codeLanguages": ["bash", "python"],
+  "externalLinks": ["https://stripe.com/docs"],
+  "internalLinks": ["pages/api-reference.md"]
 }
 ```
 
