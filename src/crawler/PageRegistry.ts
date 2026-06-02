@@ -1,4 +1,5 @@
 import { urlToSlug, makeUniqueSlug } from "../utils/slugify.js";
+import { PageContext } from "../parser/contextExtractor.js";
 
 export interface PageRecord {
   url: string;
@@ -9,6 +10,7 @@ export interface PageRecord {
   outboundUrls: string[];
   markdownContent: string;
   wordCount: number;
+  pageContext?: PageContext;
 }
 
 export class PageRegistry {
@@ -25,6 +27,7 @@ export class PageRegistry {
     depth: number;
     outboundUrls: string[];
     markdownContent: string;
+    pageContext?: PageContext;
   }): PageRecord {
     const baseSlug = urlToSlug(params.url);
     const slug = makeUniqueSlug(baseSlug, this.usedSlugs);
@@ -39,6 +42,7 @@ export class PageRegistry {
       outboundUrls: params.outboundUrls,
       markdownContent: params.markdownContent,
       wordCount: params.markdownContent.trim().split(/\s+/).filter(Boolean).length,
+      pageContext: params.pageContext,
     };
 
     this.pages.set(params.url, record);

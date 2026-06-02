@@ -23,6 +23,7 @@ export function runCLI() {
     .option("--embeddings-format <fmt>", "Embedding format: generic, pinecone, chroma, qdrant, weaviate", "generic")
     .option("--update", "Only crawl pages that changed since the last crawl")
     .option("--format <fmt>", "Output format: markdown, agent", "markdown")
+    .option("--semantic-depth <level>", "Semantic depth: standard, enhanced, full (default: standard)", "standard")
     .option("--output <dir>", "Output directory (default: output/<hostname>)")
     .action(async (url, options) => {
       await runSiteCrawler(url, {
@@ -38,6 +39,7 @@ export function runCLI() {
         embeddingsFormat: options.embeddingsFormat ?? "generic",
         update: options.update ?? false,
         format: options.format ?? "markdown",
+        semanticDepth: options.semanticDepth ?? "standard",
         outputDir: options.output,
       });
     });

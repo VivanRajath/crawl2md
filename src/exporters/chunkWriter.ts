@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { PageRegistry, PageRecord } from "../crawler/PageRegistry.js";
+import { SemanticDepth } from "../parser/contextExtractor.js";
+import { extractNamedEntities, extractRelationships } from "../parser/extractors.js";
 
 export type ChunkStrategy = "heading" | "paragraph" | "token";
 
@@ -8,6 +10,7 @@ export interface ChunkOptions {
   strategy: ChunkStrategy;
   maxTokens: number;
   overlapTokens: number;
+  semanticDepth?: SemanticDepth;
 }
 
 export interface Chunk {
@@ -113,7 +116,39 @@ export function splitIntoChunks(markdown: string, opts: ChunkOptions): Chunk[] {
   return applyOverlap(chunks, opts.overlapTokens);
 }
 
-function buildFrontmatter(page: PageRecord, chunk: Chunk, index: number, total: number): string {
+function getSectionPath(markdown: string, heading: string): string[] {
+  if (!heading) return [];
+  const lines = markdown.split("\n");
+  const path: string[] = [];
+
+  for (const line of lines) {
+    const match = line.match(/^(#{1,6})\s+(.+)$/);
+    if (match) {
+      const level = match[1].length;
+      const title = match[2].trim();
+
+      while (path.length >= level) {
+        path.pop();
+      }
+      path.push(title);
+
+      const cleanTitle = title.replace(/[`*]/g, "").trim().toLowerCase();
+      const cleanHeading = heading.replace(/[`*]/g, "").trim().toLowerCase();
+      if (cleanTitle === cleanHeading) {
+        return [...path];
+      }
+    }
+  }
+  return [heading];
+}
+
+function buildFrontmatter(
+  page: PageRecord,
+  chunk: Chunk,
+  index: number,
+  total: number,
+  semanticDepth: SemanticDepth = "standard"
+): string {
   const lines = [
     "---",
     `source: "${page.url}"`,
@@ -123,6 +158,25 @@ function buildFrontmatter(page: PageRecord, chunk: Chunk, index: number, total: 
     `total: ${total}`,
   ];
   if (chunk.heading) lines.push(`section: "${chunk.heading.replace(/"/g, '\\"')}"`);
+
+  if (semanticDepth !== "standard") {
+    const chunkEntities = extractNamedEntities(chunk.content);
+    const chunkRels = extractRelationships(chunk.content, chunkEntities);
+
+    lines.push(`entities: ${JSON.stringify(chunkEntities)}`);
+
+    const relStrings = chunkRels.map((r) => `${r.subject} ${r.predicate} ${r.object}`);
+    lines.push(`relationships: ${JSON.stringify(relStrings)}`);
+
+    if (chunk.heading && page.markdownContent) {
+      const fullMarkdown = `# ${page.title}\n\n${page.markdownContent}`;
+      const sectionPath = getSectionPath(fullMarkdown, chunk.heading);
+      if (sectionPath.length > 0) {
+        lines.push(`section_path: ${JSON.stringify(sectionPath)}`);
+      }
+    }
+  }
+
   lines.push("---");
   return lines.join("\n");
 }
@@ -142,7 +196,7 @@ export function writeChunks(registry: PageRegistry, outputDir: string, opts: Chu
 
     chunks.forEach((chunk, i) => {
       const num = String(i + 1).padStart(3, "0");
-      const frontmatter = buildFrontmatter(page, chunk, i + 1, chunks.length);
+      const frontmatter = buildFrontmatter(page, chunk, i + 1, chunks.length, opts.semanticDepth);
       fs.writeFileSync(
         path.join(pageChunksDir, `chunk-${num}.md`),
         `${frontmatter}\n\n${chunk.content}`,

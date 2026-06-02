@@ -8,6 +8,8 @@ import { UrlFilter } from "./UrlFilter.js";
 import { CrawlCache } from "./CrawlCache.js";
 import { extractReadableContent } from "../parser/readability.js";
 import { htmlToMarkdown } from "../parser/markdown.js";
+import { extractNamedEntities } from "../parser/extractors.js";
+import { extractPageContext, SemanticDepth } from "../parser/contextExtractor.js";
 import { writePages } from "../exporters/pageWriter.js";
 import { writeChunks, ChunkOptions, ChunkStrategy } from "../exporters/chunkWriter.js";
 import { writeEmbeddings, EmbeddingFormat } from "../exporters/embeddingWriter.js";
@@ -28,6 +30,7 @@ export interface CrawlOptions {
   update?: boolean;
   format?: string;
   outputDir?: string;
+  semanticDepth?: SemanticDepth;
 }
 
 export interface CrawlStats {
@@ -56,6 +59,7 @@ export interface CrawlStats {
     embeddingsFormat: string;
     update: boolean;
     format: string;
+    semanticDepth: string;
   };
   failedUrls: string[];
 }
@@ -119,6 +123,7 @@ export async function runSiteCrawler(seedUrl: string, options: CrawlOptions): Pr
     strategy: (options.chunkStrategy ?? "heading") as ChunkStrategy,
     maxTokens: options.chunkSize ?? 512,
     overlapTokens: options.chunkOverlap ?? 50,
+    semanticDepth: options.semanticDepth ?? "standard",
   };
 
   const filter = new UrlFilter(seedUrl, { include: options.include, exclude: options.exclude });
@@ -221,7 +226,15 @@ export async function runSiteCrawler(seedUrl: string, options: CrawlOptions): Pr
       .map((u) => filter.normalize(u))
       .filter((u) => filter.allow(u));
 
-    const markdownContent = htmlToMarkdown(article.content);
+    const semanticDepth = options.semanticDepth ?? "standard";
+    const markdownContent = htmlToMarkdown(article.content, semanticDepth);
+
+    // Extract page context for semantic depth modes
+    let pageContext = undefined;
+    if (semanticDepth !== "standard") {
+      const entities = extractNamedEntities(markdownContent);
+      pageContext = extractPageContext(article.content, entities, semanticDepth);
+    }
 
     const record = registry.register({
       url: entry.url,
@@ -229,6 +242,7 @@ export async function runSiteCrawler(seedUrl: string, options: CrawlOptions): Pr
       depth: entry.depth,
       outboundUrls,
       markdownContent,
+      pageContext,
     });
 
     // Update cache entry for this page
@@ -282,7 +296,7 @@ export async function runSiteCrawler(seedUrl: string, options: CrawlOptions): Pr
   }
 
   if (options.format === "agent") {
-    writeAgentExport(registry, outputDir, hostname);
+    writeAgentExport(registry, outputDir, hostname, options.semanticDepth ?? "standard");
   }
 
   const stats: CrawlStats = {
@@ -311,6 +325,7 @@ export async function runSiteCrawler(seedUrl: string, options: CrawlOptions): Pr
       embeddingsFormat: options.embeddingsFormat ?? "generic",
       update: options.update ?? false,
       format: options.format ?? "markdown",
+      semanticDepth: options.semanticDepth ?? "standard",
     },
     failedUrls,
   };
