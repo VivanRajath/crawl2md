@@ -140,6 +140,35 @@ export function extractAPIs(markdown: string): Array<{ method: string; path: str
   const openApiPathPat = /^(\s{0,4})(\/[\w/{}:.-]+)\s*:\s*\n(?:[\s\S]*?\n)*?\s+(get|post|put|patch|delete|head|options)\s*:/gim;
   for (const m of markdown.matchAll(openApiPathPat)) addAPI(m[3].toUpperCase(), m[2]);
 
+  // ── Library function/method API detection ──
+  const codeBlocks = markdown.match(/```[\s\S]*?```/g) || [];
+  const codeText = codeBlocks.join("\n");
+
+  // Library method calls: httpx.get(...), httpx.post(...), client.get(...), etc.
+  // Matches: lib.method( — common in Python/JS library docs
+  const libMethodPat = /\b([a-z][a-z0-9_]+)\.(get|post|put|patch|delete|head|options|request|stream)\s*\(/gi;
+  for (const m of codeText.matchAll(libMethodPat)) {
+    const lib = m[1];
+    const method = m[2];
+    addAPI(`${lib}.${method}`, "(function)");
+  }
+
+  // Class constructors: httpx.Client(...), httpx.AsyncClient(...), AsyncHTTPTransport(...)
+  const ctorPat = /\b(?:([a-z][a-z0-9_]+)\.)?([A-Z][A-Za-z0-9]+)\s*\(/g;
+  for (const m of codeText.matchAll(ctorPat)) {
+    const lib = m[1] || "";
+    const cls = m[2];
+    if (PASCAL_EXCLUDE.has(cls)) continue;
+    const fullName = lib ? `${lib}.${cls}` : cls;
+    addAPI("constructor", fullName);
+  }
+
+  // Chained method calls on known objects: .stream(), .read(), .aread(), .aclose()
+  const chainPat = /\.(stream|read|aread|aclose|close|send|build_request|raise_for_status)\s*\(/g;
+  for (const m of codeText.matchAll(chainPat)) {
+    addAPI("method", `.${m[1]}()`);
+  }
+
   return [...apis.values()];
 }
 
@@ -252,11 +281,58 @@ export function extractNamedEntities(markdown: string): string[] {
     track(m[1].trim());
   }
 
+  // ── Code-block entity extraction ──
+  const codeBlocks = markdown.match(/```[\s\S]*?```/g) || [];
+  const codeText = codeBlocks.join("\n");
+
+  // Class constructors: Client(), AsyncClient(), AsyncHTTPTransport()
+  for (const m of codeText.matchAll(/\b([A-Z][A-Za-z0-9]{2,})\s*\(/g)) {
+    const cls = m[1];
+    if (!PASCAL_EXCLUDE.has(cls)) track(cls);
+  }
+
+  // Library-qualified names: httpx.Client, httpx.get, httpcore.AsyncHTTPTransport
+  for (const m of codeText.matchAll(/\b([a-z][a-z0-9_]+)\.([A-Z][A-Za-z0-9]+)\b/g)) {
+    const lib = m[1];
+    const cls = m[2];
+    if (lib.length >= 2 && !PASCAL_EXCLUDE.has(cls)) {
+      track(cls);
+      track(lib);
+    }
+  }
+
+  // Library-qualified function calls: httpx.get(), httpx.post(), client.stream()
+  for (const m of codeText.matchAll(/\b([a-z][a-z0-9_]+)\.([a-z][a-z0-9_]+)\s*\(/g)) {
+    const lib = m[1];
+    const fn = m[2];
+    // Track the library name as an entity if it looks meaningful
+    if (lib.length >= 3 && !STOPWORDS.has(lib) && fn.length >= 2) {
+      track(lib);
+    }
+  }
+
+  // Import targets: from httpx import Client, AsyncClient
+  for (const m of codeText.matchAll(/from\s+([a-z][a-z0-9_.]*)\s+import\s+(.+)/g)) {
+    const lib = m[1].split(".")[0];
+    if (lib.length >= 2 && !STOPWORDS.has(lib)) track(lib);
+    // Track each imported name
+    for (const imported of m[2].split(",")) {
+      const name = imported.trim().split(/\s+/)[0]; // handle "X as Y"
+      if (name && /^[A-Z]/.test(name) && !PASCAL_EXCLUDE.has(name)) track(name);
+    }
+  }
+
+  // import statements: import httpx, import httpcore
+  for (const m of codeText.matchAll(/^import\s+([a-z][a-z0-9_.]+)/gm)) {
+    const lib = m[1].split(".")[0];
+    if (lib.length >= 2 && !STOPWORDS.has(lib)) track(lib);
+  }
+
   // Keep entities that appear at least once and aren't stopwords
   return [...entities.entries()]
     .filter(([term]) => !STOPWORDS.has(term.toLowerCase()))
     .sort(([, a], [, b]) => b - a)
-    .slice(0, 40)
+    .slice(0, 50)
     .map(([term]) => term);
 }
 
@@ -454,7 +530,40 @@ export function extractRelationships(markdown: string, knownEntities: string[]):
     }
   }
 
-  return [...rels.values()].slice(0, 60);
+  // ── Backtick-entity relationships ──
+  // Catches: `X` uses `Y`, `X` wraps `Y`, `X` supports `Y` etc.
+  const backtickRelPat = /`([^`\n]{2,30})`\s+(uses?|requires?|supports?|provides?|extends?|wraps?|handles?|replaces?|enables?|depends\s+on|built\s+on|based\s+on|integrates?\s+with|compatible\s+with|contains?)\s+`([^`\n]{2,30})`/gi;
+  for (const m of markdown.matchAll(backtickRelPat)) {
+    const subject = m[1].trim();
+    const rawPred = m[2].trim().toLowerCase().replace(/\s+/g, "-");
+    const object = m[3].trim();
+    // Normalize predicate (strip trailing s for consistency)
+    const predicate = rawPred.replace(/s$/, "").replace(/-$/, "");
+    addRel(subject, predicate, object);
+  }
+
+  // ── Import/from relationships in code blocks ──
+  const codeBlocks = markdown.match(/```[\s\S]*?```/g) || [];
+  const codeText = codeBlocks.join("\n");
+
+  // "from X import Y" → X contains Y
+  for (const m of codeText.matchAll(/from\s+([a-z][a-z0-9_.]+)\s+import\s+([A-Z][A-Za-z0-9]+)/g)) {
+    const lib = m[1].split(".")[0];
+    const imported = m[2];
+    if (entitySet.has(lib.toLowerCase()) || entitySet.has(imported.toLowerCase())) {
+      addRel(lib, "contains", imported);
+    }
+  }
+
+  // "import X" when X is a known entity → page topic uses X
+  for (const m of codeText.matchAll(/^import\s+([a-z][a-z0-9_.]+)/gm)) {
+    const lib = m[1].split(".")[0];
+    if (entitySet.has(lib.toLowerCase()) && knownEntities[0]) {
+      addRel(knownEntities[0], "uses", lib);
+    }
+  }
+
+  return [...rels.values()].slice(0, 80);
 }
 
 // ── Contextual triples (requires PageContext from contextExtractor) ──

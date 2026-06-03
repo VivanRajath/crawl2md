@@ -1,6 +1,6 @@
 {
   "name": "crawl2md",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "description": "Convert any website into a structured markdown knowledge directory — optimized for humans, AI agents, and RAG pipelines.",
   "author": "VivanRajath",
   "license": "ISC",
